@@ -302,6 +302,12 @@ export interface TalkingHeadProps {
   wordsPerPage?: number;
   fontSize?: number;
   highlightColor?: string;
+  /**
+   * Explicit total length (seconds) — the caller (our backend) knows the
+   * real source-video/audio duration, so `calculateTalkingHeadMetadata` in
+   * Root.tsx prefers this over inferring from `captions`' last timestamp.
+   */
+  durationSeconds?: number;
 }
 
 export const TalkingHead: React.FC<TalkingHeadProps> = ({

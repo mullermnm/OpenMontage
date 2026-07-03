@@ -6,6 +6,7 @@ import {
 } from "./CinematicRenderer";
 import { signalFromTomorrowWithMusicFixture } from "./cinematic/fixtures";
 import { TalkingHead, TalkingHeadProps } from "./TalkingHead";
+import { DialogueSkit, DialogueSkitProps } from "./DialogueSkit";
 import {
   TitledVideo,
   calculateTitledVideoMetadata,
@@ -120,15 +121,64 @@ export function resolveTheme(props: Record<string, unknown>): ThemeConfig {
   return DEFAULT_THEME;
 }
 
+// Map an optional `aspect` prop → output dimensions so the same Explainer can
+// render 16:9 (default), 9:16 vertical (TikTok/Reels/Shorts), or 1:1 square.
+const DIMS_FOR_ASPECT: Record<string, { width: number; height: number }> = {
+  "16:9": { width: 1920, height: 1080 },
+  "9:16": { width: 1080, height: 1920 },
+  "1:1": { width: 1080, height: 1080 },
+  "4:5": { width: 1080, height: 1350 },
+};
+
 const calculateMetadata: CalculateMetadataFunction<ExplainerProps> = async ({
   props,
 }) => {
+  const aspect = (props as { aspect?: string }).aspect;
+  const dims = (aspect && DIMS_FOR_ASPECT[aspect]) || DIMS_FOR_ASPECT["16:9"];
   const cuts = props.cuts || [];
   if (cuts.length === 0) {
-    return { durationInFrames: 30 * 60 };
+    return { durationInFrames: 30 * 60, ...dims };
   }
   const lastEnd = Math.max(...cuts.map((c) => c.out_seconds || 0));
   // Add 1 second padding for final fade
+  return { durationInFrames: Math.ceil((lastEnd + 1) * 30), ...dims };
+};
+
+// TalkingHead's source video (HeyGen avatar render or a website capture) has
+// a real, known length — prefer an explicit `durationSeconds` from the
+// caller; fall back to the last caption's end time + padding; fall back to
+// the original static 300s ceiling only when neither is present (legacy).
+const calculateTalkingHeadMetadata: CalculateMetadataFunction<
+  TalkingHeadProps
+> = async ({ props }) => {
+  const explicit = props.durationSeconds;
+  if (typeof explicit === "number" && explicit > 0) {
+    return { durationInFrames: Math.ceil((explicit + 0.5) * 30) };
+  }
+  const captions = props.captions || [];
+  if (captions.length === 0) {
+    return { durationInFrames: 30 * 300 };
+  }
+  const lastEndMs = Math.max(...captions.map((c) => c.endMs || 0));
+  return { durationInFrames: Math.ceil((lastEndMs / 1000 + 1) * 30) };
+};
+
+// Same shape for the Family-Guy-style skit — duration comes from the
+// combined narration length the caller already knows, falling back to the
+// furthest-out character cue or caption timestamp.
+const calculateDialogueSkitMetadata: CalculateMetadataFunction<
+  DialogueSkitProps
+> = async ({ props }) => {
+  const explicit = props.durationSeconds;
+  if (typeof explicit === "number" && explicit > 0) {
+    return { durationInFrames: Math.ceil((explicit + 0.5) * 30) };
+  }
+  const cueEnd = Math.max(0, ...(props.characters || []).map((c) => c.out_seconds || 0));
+  const captionEndMs = Math.max(0, ...(props.captions || []).map((c) => c.endMs || 0));
+  const lastEnd = Math.max(cueEnd, captionEndMs / 1000);
+  if (lastEnd === 0) {
+    return { durationInFrames: 30 * 60 };
+  }
   return { durationInFrames: Math.ceil((lastEnd + 1) * 30) };
 };
 
@@ -190,6 +240,24 @@ export const Root: React.FC = () => {
           fontSize: 52,
           highlightColor: "#22D3EE",
         }}
+        calculateMetadata={calculateTalkingHeadMetadata}
+      />
+      <Composition
+        id="DialogueSkit"
+        component={DialogueSkit}
+        durationInFrames={30 * 60}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{
+          backgroundSrc: "",
+          characters: [],
+          captions: [],
+          wordsPerPage: 4,
+          fontSize: 52,
+          highlightColor: "#F59E0B",
+        }}
+        calculateMetadata={calculateDialogueSkitMetadata}
       />
       <Composition
         id="TitledVideo"
