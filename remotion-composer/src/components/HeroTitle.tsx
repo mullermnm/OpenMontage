@@ -17,6 +17,12 @@ export const HeroTitle: React.FC<HeroTitleProps> = ({ title, subtitle }) => {
 
   // Staggered letter-by-letter spring
   const titleChars = title.split("");
+  // Accent the first WORD, not a fixed character count — the previous
+  // `i < 8` cutoff sliced mid-word whenever the first word wasn't exactly
+  // 7 characters (reproduced 2026-07-05: "Social Media Stress?" rendered
+  // as "Social M" in accent colour + "edia Stress?" in white, since
+  // "Social " is 7 chars + "M" lands at index 7).
+  const firstWordEnd = title.indexOf(" ") === -1 ? title.length : title.indexOf(" ");
 
   return (
     <AbsoluteFill
@@ -56,7 +62,7 @@ export const HeroTitle: React.FC<HeroTitleProps> = ({ title, subtitle }) => {
                   display: "inline-block",
                   opacity: charSpring,
                   transform: `translateY(${interpolate(charSpring, [0, 1], [30, 0])}px)`,
-                  color: i < 8 ? "#22D3EE" : "#F8FAFC", // Accent first word
+                  color: i <= firstWordEnd ? "#22D3EE" : "#F8FAFC", // Accent first word
                   whiteSpace: char === " " ? "pre" : undefined,
                   minWidth: char === " " ? "0.3em" : undefined,
                 }}
