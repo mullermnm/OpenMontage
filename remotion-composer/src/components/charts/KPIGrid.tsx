@@ -8,7 +8,10 @@ import {
 
 interface Metric {
   label: string;
-  value: number;
+  // Numbers get the count-up animation; strings ("92%", "3.2x") render as-is.
+  // AI-authored props routinely send strings — feeding one into the numeric
+  // count-up rendered a literal "NaN" card (2026-07-10, qa/renders/R2/A4.mp4).
+  value: number | string;
   prefix?: string;
   suffix?: string;
   change?: number; // percentage change, positive = up, negative = down
@@ -45,18 +48,23 @@ export const KPIGrid: React.FC<KPIGridProps> = ({
   animationStyle = "count-up",
 }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps, durationInFrames, width, height } = useVideoConfig();
 
-  const cols = Math.min(columns, metrics.length);
+  // Portrait (9:16 etc.): cap at 2 columns — the landscape-tuned 3-col grid
+  // clipped the second card off the right edge on a real vertical render
+  // (2026-07-10, qa/renders/R2/A4.mp4).
+  const maxCols = height > width ? 2 : columns;
+  const cols = Math.min(maxCols, metrics.length);
   const rows = Math.ceil(metrics.length / cols);
 
-  // Grid layout constants (within 1920x1080)
-  const gridPadding = 100;
+  // Grid layout — sized from the actual composition dimensions (was
+  // hardcoded to 1920x1080, the second cause of the 9:16 overflow).
+  const gridPadding = Math.round(width * 0.052);
   const cardGap = 28;
   const titleHeight = title ? 120 : 0;
   const gridTop = 80 + titleHeight;
-  const gridWidth = 1920 - gridPadding * 2;
-  const gridHeight = 1080 - gridTop - 80;
+  const gridWidth = width - gridPadding * 2;
+  const gridHeight = height - gridTop - 80;
   const cardWidth = (gridWidth - cardGap * (cols - 1)) / cols;
   const cardHeight = Math.min(
     (gridHeight - cardGap * (rows - 1)) / rows,
@@ -275,8 +283,16 @@ const KPICardContent: React.FC<KPICardContentProps> = ({
           config: { damping: 18, stiffness: 60 },
         });
 
-  const displayValue = Math.round(metric.value * countProgress);
-  const formattedValue = formatDisplayValue(displayValue, metric.value);
+  // Count-up only works on real finite numbers. Anything else (string stats
+  // like "92%", null, NaN) renders verbatim — never let NaN reach pixels.
+  const numericValue =
+    typeof metric.value === "number" && Number.isFinite(metric.value)
+      ? metric.value
+      : null;
+  const formattedValue =
+    numericValue !== null
+      ? formatDisplayValue(Math.round(numericValue * countProgress), numericValue)
+      : String(metric.value ?? "");
 
   // Change indicator animation
   const changeOpacity = interpolate(

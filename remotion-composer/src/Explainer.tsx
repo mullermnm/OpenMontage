@@ -233,6 +233,15 @@ interface Cut {
   progressSegments?: any[];
   // Hero title props (when used as scene, not overlay)
   heroSubtitle?: string;
+  // Opening-hook treatment (set on beats[0] by storyboard_to_props when the
+  // backend's hookLine forced this beat) — pattern-interrupt energy: accent
+  // flash frame, tighter word-slam stagger, emphasized-word underline, slow
+  // background zoom. See HeroTitle's `isHook`/`emphasisIndex` props.
+  isHook?: boolean;
+  // Index into title.split(" ") of the word to render in accent + underline
+  // (longest word / word after "Stop"/"Why"/a number — cheap heuristic
+  // computed in om_agent.py). Ignored unless isHook is true.
+  emphasisIndex?: number;
   // Styling overrides
   backgroundColor?: string;
   backgroundImage?: string; // AI-generated or stock image rendered behind the component
@@ -302,12 +311,26 @@ interface AudioConfig {
   };
 }
 
+// Art-directed caption look. Every field is optional — omitted entirely
+// falls back to the "boxed" default so callers that don't send it still
+// render (backwards compat).
+interface CaptionStyle {
+  /** One of CaptionOverlay's 6 designed families: "hormozi" | "beast" |
+   * "glow" | "karaoke" | "clean" | "boxed" (default/fallback). See
+   * CaptionOverlay.tsx for the per-family visual spec. */
+  family?: string;
+  highlightColor?: string;
+  position?: "top" | "center" | "bottom";
+  maxWords?: number;
+}
+
 export interface ExplainerProps {
   [key: string]: unknown;
   cuts: Cut[];
   overlays?: Overlay[];
   captions?: WordCaption[];
   audio?: AudioConfig;
+  captionStyle?: CaptionStyle;
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +617,13 @@ const SceneRenderer: React.FC<{ cut: Cut; theme: ThemeConfig }> = ({ cut, theme 
   }
   if (cut.type === "hero_title" && cut.text) {
     return maybeWrapWithBg(
-      <HeroTitle title={cut.text} subtitle={cut.heroSubtitle || cut.subtitle} />
+      <HeroTitle
+        title={cut.text}
+        subtitle={cut.heroSubtitle || cut.subtitle}
+        accentColor={accent}
+        isHook={cut.isHook}
+        emphasisIndex={cut.emphasisIndex}
+      />
     );
   }
   if (cut.type === "terminal_scene" && cut.steps) {
@@ -751,7 +780,7 @@ const OverlayRenderer: React.FC<{ overlay: Overlay }> = ({ overlay }) => {
     );
   }
   if (overlay.type === "hero_title") {
-    return <HeroTitle title={overlay.text} subtitle={overlay.subtitle} />;
+    return <HeroTitle title={overlay.text} subtitle={overlay.subtitle} accentColor={overlay.accentColor} />;
   }
   if (overlay.type === "provider_chip" && overlay.providers) {
     return (
@@ -772,7 +801,7 @@ const OverlayRenderer: React.FC<{ overlay: Overlay }> = ({ overlay }) => {
 // ---------------------------------------------------------------------------
 
 export const Explainer: React.FC<ExplainerProps> = (props) => {
-  const { cuts, overlays, captions, audio } = props;
+  const { cuts, overlays, captions, audio, captionStyle } = props;
   const { fps, durationInFrames } = useVideoConfig();
 
   // Resolve theme from props — playbook name, theme name, or custom themeConfig
@@ -813,9 +842,10 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
       {captions && captions.length > 0 && (
         <CaptionOverlay
           words={captions}
-          wordsPerPage={6}
-          fontSize={42}
-          highlightColor={theme.captionHighlightColor}
+          wordsPerPage={captionStyle?.maxWords || 4}
+          variant={captionStyle?.family || "boxed"}
+          position={captionStyle?.position || "bottom"}
+          highlightColor={captionStyle?.highlightColor || theme.captionHighlightColor}
           backgroundColor={theme.captionBackgroundColor}
         />
       )}

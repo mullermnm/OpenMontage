@@ -1,6 +1,7 @@
 import {
   AbsoluteFill,
   Audio,
+  Img,
   OffthreadVideo,
   Sequence,
   interpolate,
@@ -10,6 +11,15 @@ import {
   useVideoConfig,
 } from "remotion";
 import { CaptionOverlay, WordCaption } from "./components/CaptionOverlay";
+
+// The skit background can be a VIDEO (user footage / gameplay loop) OR a still
+// IMAGE (the generated animated-sitcom SETTING when there's no footage). Feeding
+// an image to <OffthreadVideo> crashes the render (rc=1), so pick the element by
+// extension. Query strings on signed URLs are stripped before the test.
+function isImageSrc(src: string): boolean {
+  const path = src.split("?")[0]!.toLowerCase();
+  return /\.(png|jpe?g|webp|gif|avif|bmp)$/.test(path);
+}
 
 // Resolve asset path — URLs pass through; a bare filename (e.g. the combined
 // narration track written into public/ by the worker) needs staticFile() to
@@ -142,13 +152,19 @@ export const DialogueSkit: React.FC<DialogueSkitProps> = ({
           requires an explicit durationInFrames), which means probing the
           source file before render. Fine for v1 as long as sourced footage
           is at least as long as the skit; revisit if that's ever violated. */}
-      {backgroundSrc && (
-        <OffthreadVideo
-          src={resolveAsset(backgroundSrc)}
-          muted
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-        />
-      )}
+      {backgroundSrc &&
+        (isImageSrc(backgroundSrc) ? (
+          <Img
+            src={resolveAsset(backgroundSrc)}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <OffthreadVideo
+            src={resolveAsset(backgroundSrc)}
+            muted
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ))}
 
       {/* Layer 2: narration track (all turns concatenated upstream) */}
       {audioSrc && <Audio src={resolveAsset(audioSrc)} />}
