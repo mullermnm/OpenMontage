@@ -36,6 +36,7 @@ import { PieChart } from "./components/charts/PieChart";
 import { KPIGrid } from "./components/charts/KPIGrid";
 import { ProgressBar } from "./components/ProgressBar";
 import { CaptionOverlay, WordCaption } from "./components/CaptionOverlay";
+import { SeriesChip } from "./components/SeriesChip";
 import { SectionTitle } from "./components/SectionTitle";
 import { StatReveal } from "./components/StatReveal";
 import { HeroTitle } from "./components/HeroTitle";
@@ -308,6 +309,14 @@ interface AudioConfig {
     offsetSeconds?: number;
     /** Loop the music if it's shorter than the video duration. */
     loop?: boolean;
+    /**
+     * Sidechain-style duck applied while narration is speaking, in dB
+     * (negative, e.g. -14 → bed drops to ~20% under voice and swells back in
+     * the gaps). Timing comes from the word captions — no live sidechain
+     * needed (research/generation-quality.md §3: duck 6-12dB, attack
+     * 10-200ms, release 200-500ms). Omitted → constant volume (old behavior).
+     */
+    duckingDb?: number;
   };
 }
 
@@ -331,6 +340,9 @@ export interface ExplainerProps {
   captions?: WordCaption[];
   audio?: AudioConfig;
   captionStyle?: CaptionStyle;
+  /** Series episode chip ("Part 2 of 7") — on-screen from frame 0, fixed
+   *  position every episode (research/series-product.md §5.4). */
+  seriesLabel?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -800,9 +812,55 @@ const OverlayRenderer: React.FC<{ overlay: Overlay }> = ({ overlay }) => {
 // Main composition
 // ---------------------------------------------------------------------------
 
+/**
+ * Merge word captions into narration windows [startSec, endSec] — words less
+ * than 0.6s apart are one continuous spoken stretch. Drives the music duck.
+ */
+function narrationWindows(captions: WordCaption[] | undefined): Array<[number, number]> {
+  if (!captions?.length) return [];
+  const windows: Array<[number, number]> = [];
+  for (const w of captions) {
+    const start = w.startMs / 1000;
+    const end = w.endMs / 1000;
+    const last = windows[windows.length - 1];
+    if (last && start - last[1] < 0.6) last[1] = Math.max(last[1], end);
+    else windows.push([start, end]);
+  }
+  return windows;
+}
+
+/**
+ * Gain multiplier for the music bed at time t: fully ducked while narration
+ * plays, unity in the gaps, with a 0.15s attack into the duck and a 0.4s
+ * release out of it (research/generation-quality.md §3).
+ */
+function duckMultiplierAt(
+  t: number,
+  windows: Array<[number, number]>,
+  duckingDb: number | undefined,
+): number {
+  if (duckingDb === undefined || windows.length === 0) return 1;
+  const ducked = Math.pow(10, -Math.abs(duckingDb) / 20);
+  const ATTACK = 0.15;
+  const RELEASE = 0.4;
+  let mult = 1;
+  for (const [start, end] of windows) {
+    if (t >= start && t <= end) return ducked;
+    if (t >= start - ATTACK && t < start) {
+      mult = Math.min(mult, 1 - ((t - (start - ATTACK)) / ATTACK) * (1 - ducked));
+    } else if (t > end && t <= end + RELEASE) {
+      mult = Math.min(mult, ducked + ((t - end) / RELEASE) * (1 - ducked));
+    }
+  }
+  return mult;
+}
+
 export const Explainer: React.FC<ExplainerProps> = (props) => {
   const { cuts, overlays, captions, audio, captionStyle } = props;
   const { fps, durationInFrames } = useVideoConfig();
+  // Cheap enough to recompute per render pass (N = word count); the volume
+  // callback then does an O(windows) scan per frame.
+  const duckWindows = narrationWindows(captions);
 
   // Resolve theme from props — playbook name, theme name, or custom themeConfig
   const theme = resolveTheme(props as Record<string, unknown>);
@@ -855,7 +913,8 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
         <Audio src={resolveAsset(audio.narration.src)} volume={audio.narration.volume ?? 1} />
       )}
 
-      {/* Layer 4: Audio — music with offset, fade in/out, and optional loop */}
+      {/* Layer 4: Audio — music with offset, fade in/out, optional loop, and
+          a caption-keyed duck under narration (duckingDb) */}
       {audio?.music?.src && (
         <Audio
           src={resolveAsset(audio.music.src)}
@@ -880,9 +939,14 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
               [baseVol, 0],
               { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
             );
-            return Math.min(fadeIn, fadeOut);
+            return Math.min(fadeIn, fadeOut) * duckMultiplierAt(f / fps, duckWindows, audio.music!.duckingDb);
           }}
         />
+      )}
+
+      {/* Layer 5: series episode chip — on-screen from frame 0 */}
+      {props.seriesLabel && (
+        <SeriesChip label={props.seriesLabel} accent={captionStyle?.highlightColor} />
       )}
     </AbsoluteFill>
   );

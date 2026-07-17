@@ -1,6 +1,7 @@
 import {
   AbsoluteFill,
   Audio,
+  Easing,
   Img,
   OffthreadVideo,
   Sequence,
@@ -11,6 +12,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { CaptionOverlay, WordCaption } from "./components/CaptionOverlay";
+import { SeriesChip } from "./components/SeriesChip";
 
 // The skit background can be a VIDEO (user footage / gameplay loop) OR a still
 // IMAGE (the generated animated-sitcom SETTING when there's no footage). Feeding
@@ -63,6 +65,10 @@ export interface DialogueSkitProps {
   [key: string]: unknown;
   /** Background footage — stock B-roll or a curated "gameplay-style" loop. */
   backgroundSrc: string;
+  /** Authoritative "image" | "video" from the backend (the asset's real kind).
+   *  When set it wins over isImageSrc's extension guess — an extensionless
+   *  user-image URL would otherwise be sent to <OffthreadVideo> and crash. */
+  backgroundKind?: "image" | "video";
   /** One entry per dialogue turn — who's "on screen" and when. */
   characters: DialogueSkitCharacterCue[];
   /** Combined narration track (all turns concatenated by the backend/worker
@@ -74,6 +80,9 @@ export interface DialogueSkitProps {
    *  ducking — matches Explainer's existing simple approach. */
   musicSrc?: string;
   musicVolume?: number;
+  /** Series episode chip ("Part 2 of 7") — on-screen from frame 0, fixed
+   *  position every episode (research/series-product.md §5.4). */
+  seriesLabel?: string;
   /** Word-level captions for the WHOLE combined track, in order. */
   captions: WordCaption[];
   /** Explicit total length — set by the caller from the real combined-audio
@@ -132,12 +141,49 @@ const PortraitCue: React.FC<{ cue: DialogueSkitCharacterCue; index: number }> = 
   );
 };
 
+/**
+ * A still scene background must never sit motionless — static AI stills are
+ * the most-cited "AI slop" tell (research/generation-quality.md §1). Slow,
+ * EASED Ken Burns across the whole skit: scale 1.0 → 1.10 plus a slight
+ * drift, direction seeded from the src so different renders vary but a given
+ * render is deterministic.
+ */
+const KenBurnsImage: React.FC<{ src: string }> = ({ src }) => {
+  const frame = useCurrentFrame();
+  const { durationInFrames } = useVideoConfig();
+  // djb2 over the src — cheap deterministic seed, no Math.random (renders
+  // must be reproducible frame-to-frame across render workers).
+  let h = 5381;
+  for (let i = 0; i < src.length; i++) h = (h * 33 + src.charCodeAt(i)) | 0;
+  const zoomIn = Math.abs(h) % 2 === 0;
+  const driftDir = Math.abs(h >> 1) % 2 === 0 ? 1 : -1;
+  const t = interpolate(frame, [0, Math.max(1, durationInFrames)], [0, 1], {
+    extrapolateRight: "clamp",
+    easing: Easing.inOut(Easing.ease),
+  });
+  const scale = zoomIn ? 1 + t * 0.1 : 1.1 - t * 0.1;
+  const drift = driftDir * (t - 0.5) * 24; // ±12px lateral drift
+  return (
+    <Img
+      src={resolveAsset(src)}
+      style={{
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+        transform: `scale(${scale}) translateX(${drift}px)`,
+      }}
+    />
+  );
+};
+
 export const DialogueSkit: React.FC<DialogueSkitProps> = ({
   backgroundSrc,
+  backgroundKind,
   characters,
   audioSrc,
   musicSrc,
   musicVolume = 0.18,
+  seriesLabel,
   captions,
   wordsPerPage = 4,
   fontSize = 52,
@@ -153,11 +199,10 @@ export const DialogueSkit: React.FC<DialogueSkitProps> = ({
           source file before render. Fine for v1 as long as sourced footage
           is at least as long as the skit; revisit if that's ever violated. */}
       {backgroundSrc &&
-        (isImageSrc(backgroundSrc) ? (
-          <Img
-            src={resolveAsset(backgroundSrc)}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
+        // Explicit kind from the backend wins; fall back to extension guessing
+        // only when it wasn't provided (older callers / worker-authored bg).
+        ((backgroundKind ? backgroundKind === "image" : isImageSrc(backgroundSrc)) ? (
+          <KenBurnsImage src={backgroundSrc} />
         ) : (
           <OffthreadVideo
             src={resolveAsset(backgroundSrc)}
@@ -193,6 +238,9 @@ export const DialogueSkit: React.FC<DialogueSkitProps> = ({
         backgroundColor="rgba(0, 0, 0, 0.65)"
         color="#FFFFFF"
       />
+
+      {/* Layer 5: series episode chip — on-screen from frame 0 */}
+      {seriesLabel && <SeriesChip label={seriesLabel} accent={highlightColor} />}
     </AbsoluteFill>
   );
 };

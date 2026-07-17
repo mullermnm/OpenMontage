@@ -1,5 +1,6 @@
 import {
   AbsoluteFill,
+  Easing,
   Img,
   interpolate,
   spring,
@@ -91,9 +92,12 @@ const AnimeVignette: React.FC = () => (
 function useCameraMotion(animation: CameraMotion, effectiveDuration: number) {
   const frame = useCurrentFrame();
 
+  // Eased, never linear — linear camera moves read as templated/mechanical
+  // (research/generation-quality.md §1, Ken Burns craft rule).
   const progress = interpolate(frame, [0, effectiveDuration], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
+    easing: Easing.inOut(Easing.ease),
   });
 
   let scale = 1;
